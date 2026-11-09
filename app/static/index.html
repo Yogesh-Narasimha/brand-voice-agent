@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Brand Voice Content Agent</title>
+<style>
+  :root { --ink:#1b1b1f; --muted:#666; --line:#e2e2e6; --accent:#3b4cca; --ok:#1e7a46; --warn:#a15c00; }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family: system-ui, -apple-system, "Segoe UI", sans-serif; color:var(--ink); background:#f7f7f9; }
+  header { padding:20px 32px; border-bottom:1px solid var(--line); background:#fff; }
+  header h1 { margin:0; font-size:20px; }
+  header p { margin:4px 0 0; color:var(--muted); font-size:14px; }
+  main { display:grid; grid-template-columns: 360px 1fr; gap:24px; padding:24px 32px; max-width:1200px; }
+  section { background:#fff; border:1px solid var(--line); border-radius:10px; padding:18px; }
+  h2 { font-size:15px; margin:0 0 12px; }
+  label { display:block; font-size:13px; color:var(--muted); margin:10px 0 4px; }
+  input, select, textarea { width:100%; padding:8px; border:1px solid var(--line); border-radius:6px; font:inherit; }
+  textarea { min-height:110px; resize:vertical; }
+  button { margin-top:12px; padding:9px 14px; border:0; border-radius:6px; background:var(--accent); color:#fff; font-weight:600; cursor:pointer; }
+  button:disabled { opacity:.5; cursor:wait; }
+  .status { font-size:13px; margin-top:8px; color:var(--muted); min-height:18px; }
+  .output { white-space:pre-wrap; line-height:1.5; padding:14px; background:#fafafc; border:1px solid var(--line); border-radius:8px; min-height:80px; }
+  .badge { display:inline-block; padding:2px 8px; border-radius:99px; font-size:12px; font-weight:600; }
+  .pass { background:#e3f4ea; color:var(--ok); } .fail { background:#fdf0dc; color:var(--warn); }
+  .meta { font-size:13px; color:var(--muted); margin:10px 0; }
+  details { margin-top:12px; font-size:13px; }
+  .step { border-left:3px solid var(--line); padding:4px 10px; margin:8px 0; white-space:pre-wrap; }
+  @media (max-width: 860px) { main { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>Brand Voice Content Agent</h1>
+  <p>Upload brand guidelines, write a brief, and an agent drafts on-brand content, reviews it against the guidelines and revises it.</p>
+</header>
+<main>
+  <div>
+    <section>
+      <h2>1. Create a brand kit</h2>
+      <label for="kitName">Brand name</label>
+      <input id="kitName" placeholder="e.g. Northwind Coffee">
+      <label for="kitFiles">Guideline files (.txt, .md, .pdf)</label>
+      <input id="kitFiles" type="file" multiple accept=".txt,.md,.pdf">
+      <button id="createKit">Upload guidelines</button>
+      <div class="status" id="kitStatus"></div>
+    </section>
+    <section style="margin-top:16px">
+      <h2>2. Generate content</h2>
+      <label for="kitSelect">Brand kit</label>
+      <select id="kitSelect"></select>
+      <label for="channel">Channel</label>
+      <select id="channel">
+        <option value="linkedin">LinkedIn post</option>
+        <option value="email">Marketing email</option>
+        <option value="instagram">Instagram caption</option>
+        <option value="ad">Search ad</option>
+        <option value="product">Product description</option>
+      </select>
+      <label for="brief">Brief</label>
+      <textarea id="brief" placeholder="e.g. Announce our new oat-milk cold brew, launching in Hyderabad stores next week."></textarea>
+      <button id="generate">Generate</button>
+      <div class="status" id="genStatus"></div>
+    </section>
+  </div>
+  <section>
+    <h2>Result</h2>
+    <div id="result" class="output">Your content will appear here.</div>
+    <div class="meta" id="resultMeta"></div>
+    <details id="trace" hidden>
+      <summary>Agent steps and guideline sources</summary>
+      <div id="steps"></div>
+      <div id="sources" class="meta"></div>
+    </details>
+  </section>
+</main>
+<script>
+const $ = (id) => document.getElementById(id);
+
+async function api(path, options = {}) {
+  const res = await fetch(path, options);
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.detail ? JSON.stringify(body.detail) : res.statusText);
+  return body;
+}
+
+async function loadKits(selectId) {
+  const kits = await api("/api/brand-kits");
+  $("kitSelect").innerHTML = kits.length
+    ? kits.map(k => `<option value="${k.id}">${k.name} (${k.chunks} chunks)</option>`).join("")
+    : '<option value="">No brand kits yet</option>';
+  if (selectId) $("kitSelect").value = selectId;
+}
+
+$("createKit").onclick = async () => {
+  const files = $("kitFiles").files;
+  if (!$("kitName").value.trim() || !files.length) { $("kitStatus").textContent = "Add a name and at least one file."; return; }
+  const form = new FormData();
+  form.append("name", $("kitName").value.trim());
+  for (const f of files) form.append("files", f);
+  $("createKit").disabled = true; $("kitStatus").textContent = "Indexing guidelines...";
+  try {
+    const kit = await api("/api/brand-kits", { method: "POST", body: form });
+    $("kitStatus").textContent = `Created "${kit.name}" from ${kit.files.length} file(s), ${kit.chunks} chunks.`;
+    await loadKits(kit.id);
+  } catch (e) { $("kitStatus").textContent = "Error: " + e.message; }
+  $("createKit").disabled = false;
+};
+
+$("generate").onclick = async () => {
+  const payload = { brand_kit_id: $("kitSelect").value, channel: $("channel").value, brief: $("brief").value.trim() };
+  if (!payload.brand_kit_id) { $("genStatus").textContent = "Create a brand kit first."; return; }
+  $("generate").disabled = true; $("genStatus").textContent = "Drafting, reviewing and revising...";
+  try {
+    const r = await api("/api/generate", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload),
+    });
+    $("result").textContent = r.content;
+    $("resultMeta").innerHTML =
+      `<span class="badge ${r.passed ? "pass" : "fail"}">Brand score ${r.review.score}/10</span> ` +
+      `${r.revisions} revision(s) · ${r.latency_ms} ms` +
+      (r.review.issues.length ? `<br>Remaining issues: ${r.review.issues.join("; ")}` : "");
+    $("steps").innerHTML = r.history.map(s => {
+      const text = s.step === "review"
+        ? `score ${s.score}/10${s.issues.length ? " · " + s.issues.join("; ") : ""}`
+        : s.content;
+      return `<div class="step"><b>${s.step}</b>\n${text.replace(/</g, "&lt;")}</div>`;
+    }).join("");
+    $("sources").textContent = "Guidelines used: " + r.sources.map(s => `${s.file} #${s.chunk}`).join(", ");
+    $("trace").hidden = false;
+    $("genStatus").textContent = "";
+  } catch (e) { $("genStatus").textContent = "Error: " + e.message; }
+  $("generate").disabled = false;
+};
+
+loadKits().catch(e => $("kitStatus").textContent = "Could not load brand kits: " + e.message);
+</script>
+</body>
+</html>
